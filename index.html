@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Top Ganadores/Perdedores – Binance Futures (USDT)</title>
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --card: #121821;
+      --muted: #8aa0b5;
+      --text: #e6edf3;
+      --green: #1db955;
+      --red: #ff4d4f;
+      --border: #243244;
+    }
+    html, body { height: 100%; }
+    body {
+      margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica Neue, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: var(--bg); color: var(--text);
+    }
+    header { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(6px); background: rgba(11,15,20,0.7); border-bottom: 1px solid var(--border); }
+    .wrap { max-width: 1400px; margin: 0 auto; padding: 16px; }
+    h1 { margin: 0; font-size: 22px; letter-spacing: .2px; }
+    .sub { color: var(--muted); font-size: 13px; margin-top: 6px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-top: 16px; }
+    .card { background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0)); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+    .card h2 { margin: 0; padding: 12px 14px; font-size: 16px; border-bottom: 1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+    .interval { color: var(--muted); font-weight: 600; font-size: 12px; letter-spacing: .4px; text-transform: uppercase; }
+    .tables { display: grid; grid-template-columns: 1fr 1fr; }
+    .pane { padding: 8px 10px 12px; }
+    .pane h3 { margin: 6px 0 8px; font-size: 13px; letter-spacing: .2px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    th, td { padding: 6px 6px; border-bottom: 1px dashed #1e2937; }
+    th { text-align: left; color: var(--muted); font-weight: 600; }
+    td.sym { font-variant-numeric: tabular-nums; }
+    .pos { color: var(--green); font-variant-numeric: tabular-nums; }
+    .neg { color: var(--red); font-variant-numeric: tabular-nums; }
+    .footer { color: var(--muted); font-size: 12px; display:flex; gap:12px; align-items:center; }
+    .badge { display:inline-block; padding: 2px 8px; border:1px solid var(--border); border-radius:999px; font-size:11px; color:var(--muted); }
+    .row-skel { height: 16px; background: linear-gradient(90deg, #132030, #0f1725, #132030); background-size: 200% 100%; animation: shimmer 1.2s infinite; border-radius: 6px; }
+    @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+    .controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+    button, select { background: var(--card); color: var(--text); border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:12px; cursor:pointer; }
+    button:hover { filter: brightness(1.08); }
+    .muted { color: var(--muted); }
+    @media (max-width: 760px) { .tables { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Top 10 Ganadores y Perdedores — Binance Futures (USDT)</h1>
+      <div class="controls">
+        <span class="badge" id="pairCount">Cargando pares…</span>
+        <span class="badge" id="lastUpdated">—</span>
+        <button id="refreshBtn" title="Actualizar ahora">Actualizar</button>
+        <label class="muted">Auto-refresco: cada <strong>2 min</strong></label>
+      </div>
+      <div class="sub">Consulta oficial: <code>fapi.binance.com</code> · Procesa símbolos en bloques de 20 para no congelar el navegador.</div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="grid" id="cards">
+      <!-- Las tarjetas por intervalo se inyectan aquí -->
+    </section>
+  </main>
+
+  <script>
+    const INTERVALS = ["30m","4h","8h","12h","1d","3d","1w","1M"]; // Binance-compatible
+    const CHUNK_SIZE = 20; // requisito: bloques de 20
+    const REFRESH_MS = 2 * 60 * 1000; // 2 minutos
+    const API_BASE = "https://fapi.binance.com";
+
+    const state = {
+      symbols: [], // lista de símbolos USDT
+    };
+
+    // Utilidades
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const chunk = (arr, size) => arr.reduce((acc, _, i) => (i % size ? acc : [...acc, arr.slice(i, i + size)]), []);
+
+    // UI helpers
+    function setPairCount(n){ document.getElementById('pairCount').textContent = `${n} pares USDT` }
+    function setLastUpdated(){ const d=new Date(); document.getElementById('lastUpdated').textContent = `Actualizado: ${d.toLocaleString()}` }
+
+    function createIntervalCard(intv){
+      const card = document.createElement('article');
+      card.className = 'card';
+      card.id = `card-${intv}`;
+      card.innerHTML = `
+        <h2>
+          <span>Intervalo</span>
+          <span class="interval">${intv}</span>
+        </h2>
+        <div class="tables">
+          <div class="pane">
+            <h3>Ganadores</h3>
+            <table><thead><tr><th>#</th><th>Símbolo</th><th>%</th></tr></thead><tbody id="win-${intv}">${skeletonRows()}</tbody></table>
+          </div>
+          <div class="pane">
+            <h3>Perdedores</h3>
+            <table><thead><tr><th>#</th><th>Símbolo</th><th>%</th></tr></thead><tbody id="lose-${intv}">${skeletonRows()}</tbody></table>
+          </div>
+        </div>
+      `;
+      return card;
+    }
+
+    function skeletonRows(){
+      return Array.from({length: 10}).map(()=>`<tr><td colspan="3"><div class="row-skel"></div></td></tr>`).join('');
+    }
+
+    function renderAllCards(){
+      const cards = document.getElementById('cards');
+      cards.innerHTML = '';
+      for(const intv of INTERVALS){ cards.appendChild(createIntervalCard(intv)); }
+    }
+
+    function renderTableRows(tbodyId, list, positive){
+      const el = document.getElementById(tbodyId);
+      el.innerHTML = list.map((row, i)=>{
+        const pct = row.change.toFixed(2);
+        const cls = positive ? 'pos' : 'neg';
+        return `<tr><td>${i+1}</td><td class="sym">${row.symbol}</td><td class="${cls}">${pct}%</td></tr>`;
+      }).join('');
+    }
+
+    // API
+    async function fetchUSDTTradingSymbols(){
+      const url = `${API_BASE}/fapi/v1/exchangeInfo`;
+      const res = await fetch(url);
+      if(!res.ok) throw new Error('No se pudo obtener exchangeInfo');
+      const data = await res.json();
+      // Filtrar solo símbolos USDT en estado TRADING
+      const symbols = data.symbols
+        .filter(s => s.quoteAsset === 'USDT' && s.status === 'TRADING')
+        .map(s => s.symbol);
+      return symbols.sort();
+    }
+
+    async function fetchChangeForSymbol(symbol, interval){
+      const url = `${API_BASE}/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=2`;
+      try {
+        const res = await fetch(url);
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        const k = await res.json();
+        if(!Array.isArray(k) || k.length < 2) return null;
+        const c1 = parseFloat(k[0][4]); // close 1
+        const c2 = parseFloat(k[1][4]); // close 2 (puede estar en formación)
+        if(!isFinite(c1) || !isFinite(c2) || c1 === 0) return null;
+        const change = ((c2 - c1) / c1) * 100;
+        return { symbol, change };
+      } catch (e){
+        console.warn('Error klines', symbol, interval, e.message);
+        return null;
+      }
+    }
+
+    async function computeTopForInterval(interval){
+      const syms = state.symbols;
+      const groups = chunk(syms, CHUNK_SIZE);
+      const results = [];
+      for (let gi = 0; gi < groups.length; gi++){
+        const group = groups[gi];
+        const batch = await Promise.all(group.map(sym => fetchChangeForSymbol(sym, interval)));
+        for(const r of batch){ if(r && isFinite(r.change)) results.push(r); }
+        // Pequeño respiro para no saturar
+        await sleep(150);
+      }
+      // Ordenar y seleccionar top 10 positivos y negativos
+      const sorted = results.sort((a,b)=> b.change - a.change);
+      const winners = sorted.filter(x=>x.change >= 0).slice(0, 10);
+      const losers = results.sort((a,b)=> a.change - b.change).slice(0, 10);
+      return { winners, losers };
+    }
+
+    async function refreshAll(){
+      renderAllCards();
+      // Asegurar símbolos cargados
+      if(state.symbols.length === 0){
+        try {
+          state.symbols = await fetchUSDTTradingSymbols();
+          setPairCount(state.symbols.length);
+        } catch (e){
+          setPairCount(0);
+          alert('Error obteniendo pares USDT: '+e.message);
+          return;
+        }
+      }
+
+      for (const intv of INTERVALS){
+        // actualizar tablas de cada intervalo
+        computeTopForInterval(intv).then(({winners, losers})=>{
+          renderTableRows(`win-${intv}`, winners, true);
+          renderTableRows(`lose-${intv}`, losers, false);
+          setLastUpdated();
+        }).catch(err=>{
+          console.error('Fallo intervalo', intv, err);
+        });
+      }
+    }
+
+    // Inicializar
+    (async function init(){
+      renderAllCards();
+      try {
+        state.symbols = await fetchUSDTTradingSymbols();
+        setPairCount(state.symbols.length);
+      } catch (e){
+        setPairCount(0);
+        console.error(e);
+      }
+      await refreshAll();
+      setLastUpdated();
+      // Auto-refresco
+      setInterval(refreshAll, REFRESH_MS);
+      document.getElementById('refreshBtn').addEventListener('click', refreshAll);
+    })();
+  </script>
+</body>
+</html>
